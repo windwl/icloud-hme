@@ -604,6 +604,46 @@ class AccountManager:
 
         return all_results
 
+    def _alias_action_context(self, acc_id: str, anonymous_id: str):
+        if not anonymous_id:
+            raise ValueError("缺少 anonymousId，请先云端同步")
+        client = self.get_client(acc_id, verbose=False)
+        aliases = client.list_aliases()
+        target = next(
+            (alias for alias in aliases if alias.get("anonymousId") == anonymous_id),
+            None,
+        )
+        if not target:
+            raise ValueError("该别名不属于当前账号，或已被删除")
+        return client, target, aliases
+
+    def _save_alias_counts(self, acc_id: str, aliases: List[Dict]) -> Dict:
+        with self._lock:
+            account = self.accounts.get(acc_id)
+            if not account:
+                raise KeyError(f"账号不存在: {acc_id}")
+            account["alias_total"] = len(aliases)
+            account["alias_active"] = sum(
+                1 for alias in aliases if alias.get("active")
+            )
+            self._save()
+            return dict(account)
+
+    def deactivate_alias(self, acc_id: str, anonymous_id: str) -> Dict:
+        client, target, aliases = self._alias_action_context(acc_id, anonymous_id)
+        client.deactivate(anonymous_id)
+        target["active"] = False
+        return self._save_alias_counts(acc_id, aliases)
+
+    def delete_alias(self, acc_id: str, anonymous_id: str) -> Dict:
+        client, _target, aliases = self._alias_action_context(acc_id, anonymous_id)
+        client.delete(anonymous_id)
+        remaining = [
+            alias for alias in aliases
+            if alias.get("anonymousId") != anonymous_id
+        ]
+        return self._save_alias_counts(acc_id, remaining)
+
     def get_aliases_for_account(self, acc_id: str) -> List[Dict]:
         try:
             client = self.get_client(acc_id, verbose=False)

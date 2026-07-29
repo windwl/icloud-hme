@@ -443,6 +443,23 @@ class ICloudHME:
                     continue
         raise RuntimeError(f"创建别名失败: {last_err}" if last_err else f"创建别名失败，已重试 {max_retries} 次")
 
+    def deactivate(self, anonymous_id: str) -> bool:
+        """停用隐私邮箱别名。"""
+        self._resolve_service()
+        self._log(f"停用 {anonymous_id} ...")
+        response = self._request(
+            "POST",
+            f"{self._service_url}/v1/hme/deactivate",
+            json_data={"anonymousId": anonymous_id},
+            max_attempts=2,
+        )
+        if response.get("success") is False:
+            raise RuntimeError(
+                response.get("error", {}).get("errorMessage", "deactivate failed")
+            )
+        self._log("已停用")
+        return True
+
     def delete(self, anonymous_id: str) -> bool:
         """删除别名 (必要时先停用再删除)"""
         self._resolve_service()

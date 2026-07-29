@@ -282,6 +282,66 @@ def test_update_cookies_preserves_account():
     print("  PASS test_update_cookies_preserves_account")
 
 
+def test_alias_deactivate_and_delete():
+    """停用与删除校验账号归属并更新统计"""
+    import tempfile
+    import account_manager as module
+    from icloud_hme import ICloudHME
+
+    api = ICloudHME({}, verbose=False)
+    api._service_url = "https://example.invalid"
+    api._resolve_service = lambda: None
+    requests = []
+    api._request = lambda method, url, json_data=None, **kwargs: (
+        requests.append((method, url, json_data)) or {"success": True}
+    )
+    assert api.deactivate("alias_1") is True
+    assert requests[-1][1].endswith("/v1/hme/deactivate")
+    assert requests[-1][2] == {"anonymousId": "alias_1"}
+
+    class Client:
+        def __init__(self):
+            self.deactivated = []
+            self.deleted = []
+
+        def list_aliases(self):
+            return [
+                {"anonymousId": "alias_1", "active": True},
+                {"anonymousId": "alias_2", "active": False},
+            ]
+
+        def deactivate(self, anonymous_id):
+            self.deactivated.append(anonymous_id)
+
+        def delete(self, anonymous_id):
+            self.deleted.append(anonymous_id)
+
+    original_path = module.ACCOUNTS_FILE
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            module.ACCOUNTS_FILE = Path(tmp) / "accounts.json"
+            manager = module.AccountManager()
+            manager.accounts = {"acc_1": {
+                "id": "acc_1", "cookies": {},
+                "alias_total": 2, "alias_active": 1,
+            }}
+            client = Client()
+            manager.get_client = lambda *args, **kwargs: client
+
+            deactivated = manager.deactivate_alias("acc_1", "alias_1")
+            assert client.deactivated == ["alias_1"]
+            assert deactivated["alias_total"] == 2
+            assert deactivated["alias_active"] == 0
+
+            deleted = manager.delete_alias("acc_1", "alias_1")
+            assert client.deleted == ["alias_1"]
+            assert deleted["alias_total"] == 1
+            assert deleted["alias_active"] == 0
+    finally:
+        module.ACCOUNTS_FILE = original_path
+    print("  PASS test_alias_deactivate_and_delete")
+
+
 def test_account_update_lock():
     """账号更新可在持久化时重入锁"""
     import tempfile
@@ -356,6 +416,12 @@ def test_compat_api_contract():
                 "alias_active": 1,
             }
 
+        def deactivate_alias(self, acc_id, anonymous_id):
+            return {"alias_total": 2, "alias_active": 1}
+
+        def delete_alias(self, acc_id, anonymous_id):
+            return {"alias_total": 1, "alias_active": 1}
+
         def create_aliases_for_account(self, acc_id, count=1, label=""):
             return [{"ok": True, "email": "alias@icloud.com", "account_id": acc_id}]
 
@@ -389,6 +455,18 @@ def test_compat_api_contract():
         assert "从 Chrome 自动提取" in web_ui.UI_HTML
         assert "ICLOUD_HME_EXTENSION_UPDATE" in web_ui.UI_HTML
 
+        deactivated = client.post(
+            "/api/accounts/acc_1/aliases/alias_1/deactivate"
+        ).get_json()
+        assert deactivated["ok"] is True
+
+        deleted = client.post(
+            "/api/accounts/acc_1/aliases/alias_1/delete"
+        ).get_json()
+        assert deleted["ok"] is True
+        assert "deactivateAlias" in web_ui.UI_HTML
+        assert "deleteAlias" in web_ui.UI_HTML
+
         created = client.post(
             "/api/create",
             json={"account_id": "acc_1", "label": "OpenAI"},
@@ -415,6 +493,7 @@ if __name__ == "__main__":
         ("derive_icloud_email_appleid_is_icloud", test_derive_icloud_email_appleid_is_icloud),
         ("derive_icloud_email_third_party", test_derive_icloud_email_third_party),
         ("update_cookies_preserves_account", test_update_cookies_preserves_account),
+        ("alias_deactivate_and_delete", test_alias_deactivate_and_delete),
         ("account_update_lock", test_account_update_lock),
         ("mail_cache_basic", test_mail_cache_basic),
         ("strip_html", test_strip_html),
