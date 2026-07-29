@@ -440,6 +440,7 @@ def test_log_polling_does_not_hold_server_threads():
     assert "loading-spinner" in web_ui.UI_HTML
     assert "apiLong" in web_ui.UI_HTML
     assert "重复启动返回 HTTP 409" in web_ui.UI_HTML
+    assert "/api/code?email=alias@icloud.com" in web_ui.UI_HTML
     web_ui._logs.clear()
     print("  PASS test_log_polling_does_not_hold_server_threads")
 
@@ -547,6 +548,19 @@ def test_compat_api_contract():
             query_string={"account_id": "acc_1", "alias": "alias@icloud.com"},
         ).get_json()
         assert inbox["data"]["messages"][0]["preview"] == "123456"
+
+        code_response = client.get(
+            "/api/code",
+            query_string={"account_id": "acc_1", "email": "alias@icloud.com"},
+        )
+        assert code_response.status_code == 200
+        code_data = code_response.get_json()
+        assert code_data["success"] is True
+        assert code_data["data"]["code"] == "123456"
+        assert code_data["data"]["email"] == "alias@icloud.com"
+
+        invalid_code = client.get("/api/code")
+        assert invalid_code.status_code == 400
     finally:
         web_ui._account_mgr = original
         web_ui._scheduler_thread = original_scheduler_thread
