@@ -138,18 +138,33 @@ def test_strip_html_with_link():
 
 def test_chrome_cookie_path_scans_profiles():
     """Chrome 使用 Profile 1 时也能定位 Cookie 数据库"""
+    import sqlite3
     import tempfile
     import icloud_hme
 
     old_local_appdata = os.environ.get("LOCALAPPDATA")
+    original_key = icloud_hme._get_chrome_key
+    original_decrypt = icloud_hme._decrypt_chrome_value
     try:
         with tempfile.TemporaryDirectory() as tmp:
             cookie = Path(tmp) / "Google" / "Chrome" / "User Data" / "Profile 1" / "Network" / "Cookies"
             cookie.parent.mkdir(parents=True)
-            cookie.touch()
+            conn = sqlite3.connect(cookie)
+            conn.execute("CREATE TABLE cookies (host_key TEXT, name TEXT, encrypted_value BLOB)")
+            conn.execute(
+                "INSERT INTO cookies VALUES (?, ?, ?)",
+                (".icloud.com", "TOKEN", b"encrypted"),
+            )
+            conn.commit()
+            conn.close()
             os.environ["LOCALAPPDATA"] = tmp
             assert Path(icloud_hme._get_chrome_cookie_path()) == cookie
+            icloud_hme._get_chrome_key = lambda: b"key"
+            icloud_hme._decrypt_chrome_value = lambda value, key: "decrypted"
+            assert icloud_hme.extract_chrome_cookies() == {"TOKEN": "decrypted"}
     finally:
+        icloud_hme._get_chrome_key = original_key
+        icloud_hme._decrypt_chrome_value = original_decrypt
         if old_local_appdata is None:
             os.environ.pop("LOCALAPPDATA", None)
         else:
@@ -298,6 +313,8 @@ def test_log_polling_does_not_hold_server_threads():
     assert response.get_json()["logs"][-1]["msg"] == "snapshot"
     assert "text/event-stream" not in response.content_type
     assert "if(Array.isArray(a.accounts))accounts=a.accounts" in web_ui.UI_HTML
+    assert ".acc-card .acc-error{" in web_ui.UI_HTML
+    assert "stText.substring" not in web_ui.UI_HTML
     web_ui._logs.clear()
     print("  PASS test_log_polling_does_not_hold_server_threads")
 

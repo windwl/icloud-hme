@@ -37,6 +37,8 @@ import json
 import re
 import time
 import sqlite3
+import shutil
+import tempfile
 import argparse
 import hashlib
 import base64
@@ -169,20 +171,29 @@ def extract_chrome_cookies() -> Dict[str, str]:
     if not key:
         raise RuntimeError("无法获取 Chrome 加密密钥 (非 Windows 系统请使用 --cookies)")
 
-    from Crypto.Cipher import AES
+    with tempfile.TemporaryDirectory(prefix="icloud_hme_") as temp_dir:
+        snapshot = os.path.join(temp_dir, "Cookies")
+        try:
+            shutil.copy2(cookie_path, snapshot)
+            for suffix in ("-wal", "-shm"):
+                sidecar = cookie_path + suffix
+                if os.path.isfile(sidecar):
+                    shutil.copy2(sidecar, snapshot + suffix)
+        except OSError as exc:
+            raise RuntimeError(f"读取 Chrome Cookie 数据库失败: {exc}") from exc
 
-    conn = sqlite3.connect(f"file:{cookie_path}?mode=ro", uri=True)
-    try:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        placeholders = ",".join("?" * len(ICLOUD_COOKIE_DOMAINS))
-        cursor.execute(
-            f"SELECT name, encrypted_value FROM cookies WHERE host_key IN ({placeholders})",
-            ICLOUD_COOKIE_DOMAINS,
-        )
-        rows = cursor.fetchall()
-    finally:
-        conn.close()
+        conn = sqlite3.connect(snapshot)
+        try:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            placeholders = ",".join("?" * len(ICLOUD_COOKIE_DOMAINS))
+            cursor.execute(
+                f"SELECT name, encrypted_value FROM cookies WHERE host_key IN ({placeholders})",
+                ICLOUD_COOKIE_DOMAINS,
+            )
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
 
     cookies = {}
     for row in rows:
