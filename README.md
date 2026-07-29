@@ -78,7 +78,7 @@ python icloud_hme.py delete --email xxx@icloud.com --cookies cookies.json
 | 方式 | 说明 |
 |------|------|
 | Web UI 导入 | 点击左下角按钮，粘贴 Cookie Editor 的 Header String |
-| Chrome 自动提取 | Windows 下 `python icloud_hme.py export-cookies` |
+| Chrome 扩展自动提取 | 在 `chrome://extensions` 加载项目内 `icloud-cookie-extensions`，然后在更新 Cookie 弹窗点击自动提取 |
 | 命令行 `--cookies` | 指定 JSON 文件路径 |
 
 支持两种输入格式：
@@ -103,6 +103,7 @@ python icloud_hme.py delete --email xxx@icloud.com --cookies cookies.json
 ├── icloud_hme.py        # 核心库：Cookie 提取 / HME API / 账号身份提取
 ├── account_manager.py   # 多账号管理器：CRUD / 批量创建 / 别名索引
 ├── web_ui.py            # Flask Web 面板 + 内置调度器
+├── icloud-cookie-extensions/ # Chrome Cookie API 本地桥接扩展
 ├── scheduler.py         # 独立命令行调度器
 └── requirements.txt     # pip 依赖
 ```

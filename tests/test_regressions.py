@@ -324,11 +324,23 @@ def test_log_polling_does_not_hold_server_threads():
     print("  PASS test_log_polling_does_not_hold_server_threads")
 
 
+def test_chrome_extension_manifest():
+    """Chrome 扩展仅申请 iCloud Cookie 与本机服务权限"""
+    manifest = json.loads(
+        (HERE / "icloud-cookie-extensions" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["manifest_version"] == 3
+    assert manifest["permissions"] == ["cookies"]
+    assert "https://*.icloud.com/*" in manifest["host_permissions"]
+    assert "http://127.0.0.1/*" in manifest["host_permissions"]
+    assert (HERE / "icloud-cookie-extensions" / "background.js").exists()
+    assert (HERE / "icloud-cookie-extensions" / "bridge.js").exists()
+    print("  PASS test_chrome_extension_manifest")
+
+
 def test_compat_api_contract():
     """主项目需要的 accounts/create/inbox API 契约"""
     import web_ui
-
-    received_cookie_inputs = []
 
     class Manager:
         def list_accounts(self):
@@ -338,7 +350,6 @@ def test_compat_api_contract():
             }]
 
         def update_cookies(self, acc_id, cookie_input):
-            received_cookie_inputs.append(cookie_input)
             return {
                 "id": acc_id, "name": "main", "status": "active",
                 "real_email": "owner@example.com", "alias_total": 2,
@@ -359,9 +370,7 @@ def test_compat_api_contract():
             return []
 
     original = web_ui._account_mgr
-    original_extract = web_ui.extract_chrome_cookies
     web_ui._account_mgr = Manager()
-    web_ui.extract_chrome_cookies = lambda: {"TOKEN": "from-chrome"}
     try:
         client = web_ui.app.test_client()
         accounts = client.get("/api/accounts").get_json()
@@ -377,13 +386,8 @@ def test_compat_api_contract():
         assert updated["ok"] is True
         assert updated["id"] == "acc_1"
 
-        chrome_updated = client.post(
-            "/api/accounts/acc_1/cookies",
-            json={"source": "chrome"},
-        ).get_json()
-        assert chrome_updated["ok"] is True
-        assert json.loads(received_cookie_inputs[-1]) == {"TOKEN": "from-chrome"}
         assert "从 Chrome 自动提取" in web_ui.UI_HTML
+        assert "ICLOUD_HME_EXTENSION_UPDATE" in web_ui.UI_HTML
 
         created = client.post(
             "/api/create",
@@ -398,7 +402,6 @@ def test_compat_api_contract():
         assert inbox["data"]["messages"][0]["preview"] == "123456"
     finally:
         web_ui._account_mgr = original
-        web_ui.extract_chrome_cookies = original_extract
     print("  PASS test_compat_api_contract")
 
 
@@ -420,6 +423,7 @@ if __name__ == "__main__":
         ("icloud_hme_421_message", test_icloud_hme_421_message),
         ("icloud_hme_account_info", test_icloud_hme_account_info),
         ("log_polling_does_not_hold_server_threads", test_log_polling_does_not_hold_server_threads),
+        ("chrome_extension_manifest", test_chrome_extension_manifest),
         ("compat_api_contract", test_compat_api_contract),
     ]
     

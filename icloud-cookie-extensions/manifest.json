@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "iCloud HME Cookie Bridge",
+  "version": "1.0.0",
+  "description": "将当前 Chrome iCloud 登录态同步到本机 iCloud HME 服务。",
+  "permissions": ["cookies"],
+  "host_permissions": [
+    "https://icloud.com/*",
+    "https://*.icloud.com/*",
+    "https://icloud.com.cn/*",
+    "https://*.icloud.com.cn/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://127.0.0.1/*", "http://localhost/*"],
+      "js": ["bridge.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
