@@ -75,30 +75,42 @@ class ICloudMail:
     def _ensure_connected(self):
         if not self._conn:
             self.connect()
-        if self._conn.state != "SELECTED":
-            self._conn.select("INBOX", readonly=True)
 
-    def check_inbox(self, limit: int = 50, days: int = 7) -> List[Dict]:
-        self._ensure_connected()
-        return self._search_and_fetch(None, limit, days)
-
-    def check_unread(self, limit: int = 50, days: int = 7) -> List[Dict]:
-        self._ensure_connected()
-        return self._search_and_fetch("UNSEEN", limit, days)
-
-    def find_by_recipient(self, recipient: str, limit: int = 20, days: int = 30) -> List[Dict]:
+    def _select_mailbox(self, mailbox: str) -> bool:
         self._ensure_connected()
         try:
-            messages = self._search_and_fetch(f'TO "{recipient}"', limit, days)
+            status, _ = self._conn.select(mailbox, readonly=True)
+            return status == "OK"
+        except imaplib.IMAP4.error:
+            return False
+
+    def _search_all(self, criteria: Optional[str], limit: int, days: int) -> List[Dict]:
+        messages: List[Dict] = []
+        for mailbox in ("INBOX", "Junk"):
+            if self._select_mailbox(mailbox):
+                messages.extend(self._search_and_fetch(criteria, limit, days, mailbox))
+        messages.sort(key=lambda item: item.get("date", ""), reverse=True)
+        return messages[:limit]
+
+    def check_inbox(self, limit: int = 50, days: int = 7) -> List[Dict]:
+        return self._search_all(None, limit, days)
+
+    def check_unread(self, limit: int = 50, days: int = 7) -> List[Dict]:
+        return self._search_all("UNSEEN", limit, days)
+
+    def find_by_recipient(self, recipient: str, limit: int = 20, days: int = 30) -> List[Dict]:
+        try:
+            messages = self._search_all(f'TO "{recipient}"', limit, days)
         except Exception:
-            all_msgs = self._search_and_fetch(None, limit * 3, days)
             messages = [
-                m for m in all_msgs
-                if recipient.lower() in m.get("to", "").lower()
+                message for message in self._search_all(None, limit * 3, days)
+                if recipient.lower() in message.get("to", "").lower()
             ][:limit]
 
         for message in messages:
             try:
+                if not self._select_mailbox(message.get("mailbox", "INBOX")):
+                    continue
                 full = self._fetch_full_message(str(message["id"]).encode()) or {}
                 preview = str(full.get("body") or "").strip()[:1000]
                 message["preview"] = preview
@@ -108,23 +120,11 @@ class ICloudMail:
         return messages
 
     def stream_inbox(self, limit: int = 50, days: int = 7):
-        self._ensure_connected()
-        since = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
-        full = f'(SINCE "{since}")'
-        status, data = self._conn.uid("SEARCH", None, full)
-        if status != "OK" or not data[0]:
-            return
-        uids = data[0].split()
-        recent = uids[-limit:] if len(uids) > limit else uids
-        for uid in reversed(recent):
-            try:
-                msg = self._fetch_headers_uid(uid)
-                if msg:
-                    yield msg
-            except Exception:
-                continue
+        yield from self.check_inbox(limit=limit, days=days)
 
-    def _search_and_fetch(self, criteria: Optional[str], limit: int, days: int) -> List[Dict]:
+    def _search_and_fetch(
+        self, criteria: Optional[str], limit: int, days: int, mailbox: str
+    ) -> List[Dict]:
         since = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
         full = f'({criteria} SINCE "{since}")' if criteria else f'(SINCE "{since}")'
         status, data = self._conn.uid("SEARCH", None, full)
@@ -135,7 +135,7 @@ class ICloudMail:
         emails: List[Dict] = []
         for uid in reversed(recent):
             try:
-                msg = self._fetch_headers_uid(uid)
+                msg = self._fetch_headers_uid(uid, mailbox)
                 if msg:
                     emails.append(msg)
             except Exception:
@@ -148,13 +148,17 @@ class ICloudMail:
             return None
         return self._parse_header_response(data, msg_id)
 
-    def _fetch_headers_uid(self, uid: bytes) -> Optional[Dict]:
+    def _fetch_headers_uid(
+        self, uid: bytes, mailbox: str = "INBOX"
+    ) -> Optional[Dict]:
         status, data = self._conn.uid("FETCH", uid, "(BODY.PEEK[HEADER])")
         if status != "OK":
             return None
-        return self._parse_header_response(data, uid)
+        return self._parse_header_response(data, uid, mailbox)
 
-    def _parse_header_response(self, data, msg_id: bytes) -> Optional[Dict]:
+    def _parse_header_response(
+        self, data, msg_id: bytes, mailbox: str = "INBOX"
+    ) -> Optional[Dict]:
         raw = self._extract_body(data)
         if not raw:
             return None
@@ -164,6 +168,8 @@ class ICloudMail:
             return None
         return {
             "id": msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id),
+            "mailbox": mailbox,
+            "folder": "垃圾邮件" if mailbox == "Junk" else "收件箱",
             "from": self._decode_header(msg.get("From", "")),
             "to": self._decode_header(msg.get("To", "")),
             "subject": self._decode_header(msg.get("Subject", "")),
@@ -173,8 +179,9 @@ class ICloudMail:
             "size": len(raw),
         }
 
-    def fetch_body(self, msg_id: bytes) -> Optional[str]:
-        self._ensure_connected()
+    def fetch_body(self, msg_id: bytes, mailbox: str = "INBOX") -> Optional[str]:
+        if not self._select_mailbox(mailbox):
+            return None
         status, data = self._conn.uid("FETCH", msg_id, "(BODY.PEEK[TEXT])")
         if status != "OK":
             return None
@@ -186,12 +193,15 @@ class ICloudMail:
         except Exception:
             return raw.decode("latin-1", errors="replace")
 
-    def fetch_full(self, msg_id: bytes) -> Optional[Dict]:
-        self._ensure_connected()
+    def fetch_full(
+        self, msg_id: bytes, mailbox: str = "INBOX"
+    ) -> Optional[Dict]:
+        if not self._select_mailbox(mailbox):
+            return None
         msg = self._fetch_full_message(msg_id)
         if not msg:
             return None
-        hdr = self._fetch_headers_uid(msg_id)
+        hdr = self._fetch_headers_uid(msg_id, mailbox)
         if hdr:
             msg.update(hdr)
         return msg

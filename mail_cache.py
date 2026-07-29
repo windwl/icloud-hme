@@ -17,6 +17,10 @@ HERE = Path(__file__).resolve().parent
 CACHE_FILE = HERE / "results" / "mail_cache.json"
 
 
+def _message_key(message: Dict):
+    return (message.get("mailbox") or "INBOX", message.get("id"))
+
+
 class MailCache:
     """邮件本地缓存"""
 
@@ -56,12 +60,12 @@ class MailCache:
     def set_inbox(self, acc_id: str, emails: List[Dict]):
         with self._lock:
             self._ensure_account(acc_id)
-            existing_ids = {e.get("id") for e in self._data[acc_id]["inbox_emails"]}
+            existing_ids = {_message_key(e) for e in self._data[acc_id]["inbox_emails"]}
             new_emails = []
             for email in emails:
-                if email.get("id") in existing_ids:
+                if _message_key(email) in existing_ids:
                     continue
-                existing_ids.add(email.get("id"))
+                existing_ids.add(_message_key(email))
                 new_emails.append(email)
             if new_emails:
                 self._data[acc_id]["inbox_emails"].extend(new_emails)
@@ -81,12 +85,12 @@ class MailCache:
             self._ensure_account(acc_id)
             if alias_email not in self._data[acc_id]["alias_emails"]:
                 self._data[acc_id]["alias_emails"][alias_email] = []
-            existing_ids = {e.get("id") for e in self._data[acc_id]["alias_emails"][alias_email]}
+            existing_ids = {_message_key(e) for e in self._data[acc_id]["alias_emails"][alias_email]}
             new_emails = []
             for email in emails:
-                if email.get("id") in existing_ids:
+                if _message_key(email) in existing_ids:
                     continue
-                existing_ids.add(email.get("id"))
+                existing_ids.add(_message_key(email))
                 new_emails.append(email)
             if new_emails:
                 self._data[acc_id]["alias_emails"][alias_email].extend(new_emails)
@@ -98,12 +102,12 @@ class MailCache:
             for alias, emails in by_alias.items():
                 if alias not in self._data[acc_id]["alias_emails"]:
                     self._data[acc_id]["alias_emails"][alias] = []
-                existing_ids = {e.get("id") for e in self._data[acc_id]["alias_emails"][alias]}
+                existing_ids = {_message_key(e) for e in self._data[acc_id]["alias_emails"][alias]}
                 new_emails = []
                 for email in emails:
-                    if email.get("id") in existing_ids:
+                    if _message_key(email) in existing_ids:
                         continue
-                    existing_ids.add(email.get("id"))
+                    existing_ids.add(_message_key(email))
                     new_emails.append(email)
                 if new_emails:
                     self._data[acc_id]["alias_emails"][alias].extend(new_emails)

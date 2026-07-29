@@ -98,18 +98,57 @@ def test_mail_cache_basic():
         {"id": "1", "from": "a@b.com", "to": "x@icloud.com", "subject": "Hello", "date": "2025-01-01T00:00:00"},
         {"id": "2", "from": "c@d.com", "to": "y@icloud.com", "subject": "World", "date": "2025-01-02T00:00:00"},
         {"id": "1", "from": "a@b.com", "to": "x@icloud.com", "subject": "Hello Duplicate", "date": "2025-01-03T00:00:00"},
+        {"id": "1", "mailbox": "Junk", "from": "spam@b.com", "to": "x@icloud.com", "subject": "Junk", "date": "2025-01-04T00:00:00"},
     ]
-    
+
     cache.set_inbox("test_acc", emails)
     cached = cache.get_inbox("test_acc")
-    
-    # 应该有 2 封（第 3 封 id 重复被去重）
-    assert len(cached) == 2, f"期望 2 封，实际 {len(cached)}"
+
+    # 同一目录的重复 UID 去重，不同目录的相同 UID 分别保留。
+    assert len(cached) == 3, f"期望 3 封，实际 {len(cached)}"
     
     # 清理
     cache.clear_account("test_acc")
     assert len(cache.get_inbox("test_acc")) == 0
     print("  PASS test_mail_cache_basic")
+
+
+def test_mail_reads_inbox_and_junk():
+    """默认合并收件箱与垃圾邮件，并保留邮件目录。"""
+    from icloud_mail import ICloudMail
+
+    class Connection:
+        state = "AUTH"
+
+        def __init__(self):
+            self.selected = []
+
+        def select(self, mailbox, readonly=True):
+            self.selected.append(mailbox)
+            self.state = "SELECTED"
+            return "OK", [b"1"]
+
+    mail = ICloudMail("user@icloud.com", "password")
+    mail._conn = Connection()
+
+    def search(criteria, limit, days, mailbox):
+        date = "2026-07-29T12:00:00" if mailbox == "INBOX" else "2026-07-29T13:00:00"
+        return [{"id": "1", "mailbox": mailbox, "date": date}]
+
+    mail._search_and_fetch = search
+    messages = mail.check_inbox(limit=10, days=7)
+
+    assert mail._conn.selected == ["INBOX", "Junk"]
+    assert [message["mailbox"] for message in messages] == ["Junk", "INBOX"]
+
+    mail._fetch_full_message = lambda msg_id: {"body": "code"}
+    mail._fetch_headers_uid = lambda msg_id, mailbox="INBOX": {
+        "id": msg_id.decode(), "mailbox": mailbox
+    }
+    full = mail.fetch_full(b"1", mailbox="Junk")
+    assert full["body"] == "code"
+    assert full["mailbox"] == "Junk"
+    print("  PASS test_mail_reads_inbox_and_junk")
 
 
 def test_strip_html():
@@ -528,6 +567,7 @@ if __name__ == "__main__":
         ("scheduler_beijing_window_and_shared_web_core", test_scheduler_beijing_window_and_shared_web_core),
         ("account_update_lock", test_account_update_lock),
         ("mail_cache_basic", test_mail_cache_basic),
+        ("mail_reads_inbox_and_junk", test_mail_reads_inbox_and_junk),
         ("strip_html", test_strip_html),
         ("strip_html_with_link", test_strip_html_with_link),
         ("chrome_cookie_path_scans_profiles", test_chrome_cookie_path_scans_profiles),
