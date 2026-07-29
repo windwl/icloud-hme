@@ -145,6 +145,7 @@ def test_chrome_cookie_path_scans_profiles():
     old_local_appdata = os.environ.get("LOCALAPPDATA")
     original_key = icloud_hme._get_chrome_key
     original_decrypt = icloud_hme._decrypt_chrome_value
+    original_copy = icloud_hme.shutil.copy2
     try:
         with tempfile.TemporaryDirectory() as tmp:
             cookie = Path(tmp) / "Google" / "Chrome" / "User Data" / "Profile 1" / "Network" / "Cookies"
@@ -161,10 +162,14 @@ def test_chrome_cookie_path_scans_profiles():
             assert Path(icloud_hme._get_chrome_cookie_path()) == cookie
             icloud_hme._get_chrome_key = lambda: b"key"
             icloud_hme._decrypt_chrome_value = lambda value, key: "decrypted"
+            icloud_hme.shutil.copy2 = lambda *args, **kwargs: (_ for _ in ()).throw(
+                PermissionError("Chrome database is locked")
+            )
             assert icloud_hme.extract_chrome_cookies() == {"TOKEN": "decrypted"}
     finally:
         icloud_hme._get_chrome_key = original_key
         icloud_hme._decrypt_chrome_value = original_decrypt
+        icloud_hme.shutil.copy2 = original_copy
         if old_local_appdata is None:
             os.environ.pop("LOCALAPPDATA", None)
         else:

@@ -44,6 +44,7 @@ import hashlib
 import base64
 import secrets
 from datetime import datetime
+from pathlib import Path
 from typing import Optional, Dict, List, Any
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
@@ -171,29 +172,36 @@ def extract_chrome_cookies() -> Dict[str, str]:
     if not key:
         raise RuntimeError("无法获取 Chrome 加密密钥 (非 Windows 系统请使用 --cookies)")
 
-    with tempfile.TemporaryDirectory(prefix="icloud_hme_") as temp_dir:
-        snapshot = os.path.join(temp_dir, "Cookies")
-        try:
-            shutil.copy2(cookie_path, snapshot)
-            for suffix in ("-wal", "-shm"):
-                sidecar = cookie_path + suffix
-                if os.path.isfile(sidecar):
-                    shutil.copy2(sidecar, snapshot + suffix)
-        except OSError as exc:
-            raise RuntimeError(f"读取 Chrome Cookie 数据库失败: {exc}") from exc
-
-        conn = sqlite3.connect(snapshot)
+    def read_rows(database: str, uri: bool = False):
+        conn = sqlite3.connect(database, uri=uri)
         try:
             conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
             placeholders = ",".join("?" * len(ICLOUD_COOKIE_DOMAINS))
-            cursor.execute(
+            return conn.execute(
                 f"SELECT name, encrypted_value FROM cookies WHERE host_key IN ({placeholders})",
                 ICLOUD_COOKIE_DOMAINS,
-            )
-            rows = cursor.fetchall()
+            ).fetchall()
         finally:
             conn.close()
+
+    database_uri = Path(cookie_path).resolve().as_uri() + "?mode=ro&immutable=1"
+    try:
+        rows = read_rows(database_uri, uri=True)
+    except sqlite3.Error as direct_error:
+        with tempfile.TemporaryDirectory(prefix="icloud_hme_") as temp_dir:
+            snapshot = os.path.join(temp_dir, "Cookies")
+            try:
+                shutil.copy2(cookie_path, snapshot)
+                for suffix in ("-wal", "-shm"):
+                    sidecar = cookie_path + suffix
+                    if os.path.isfile(sidecar):
+                        shutil.copy2(sidecar, snapshot + suffix)
+                rows = read_rows(snapshot)
+            except (OSError, sqlite3.Error) as snapshot_error:
+                raise RuntimeError(
+                    f"读取 Chrome Cookie 数据库失败: {snapshot_error}; "
+                    f"只读访问错误: {direct_error}"
+                ) from snapshot_error
 
     cookies = {}
     for row in rows:
