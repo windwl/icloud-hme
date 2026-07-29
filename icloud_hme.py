@@ -282,8 +282,11 @@ class ICloudHME:
             try:
                 resp = self.session.request(method, full_url, headers=headers, data=body, timeout=timeout)
                 if not resp.ok:
-                    last_err = RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
-                    if resp.status_code in (401, 403):
+                    if resp.status_code == 421:
+                        last_err = RuntimeError("HTTP 421: iCloud 登录会话已失效，请重新登录并导出 Cookie")
+                    else:
+                        last_err = RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+                    if resp.status_code in (401, 403, 421):
                         raise last_err
                     if attempt < max_attempts:
                         time.sleep(RETRY_DELAYS[min(attempt - 1, len(RETRY_DELAYS) - 1)])

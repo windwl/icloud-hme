@@ -41,7 +41,8 @@ class AccountManager:
 
     def __init__(self):
         self.accounts: Dict[str, Dict] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._create_locks: Dict[str, threading.Lock] = {}
         self._cache = get_cache()
         self._load()
 
@@ -107,11 +108,28 @@ class AccountManager:
         if not raw:
             raise ValueError("空白输入 — 请粘贴 Cookie Header String 或 JSON")
 
-        if raw.startswith("{"):
+        if raw[0] in "[{":
             try:
-                cookies = json.loads(raw)
-                if isinstance(cookies, dict):
-                    return {k: str(v) for k, v in cookies.items() if v}
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict) and isinstance(parsed.get("accounts"), list):
+                    accounts = parsed["accounts"]
+                    parsed = accounts[0].get("cookies", []) if accounts else []
+                if isinstance(parsed, list):
+                    cookies = {
+                        str(item["name"]): str(item.get("value", ""))
+                        for item in parsed
+                        if isinstance(item, dict) and item.get("name") and item.get("value")
+                    }
+                    if cookies:
+                        return cookies
+                elif isinstance(parsed, dict):
+                    cookies = {
+                        str(k): str(v) for k, v in parsed.items()
+                        if v and not isinstance(v, (dict, list))
+                    }
+                    if cookies:
+                        return cookies
+                raise ValueError("JSON 中未找到 Cookie")
             except json.JSONDecodeError:
                 pass
 
@@ -139,6 +157,8 @@ class AccountManager:
         from icloud_hme import ICloudHME
 
         cookies = self.parse_cookie_input(cookie_input)
+        if host == "icloud.com" and ".icloud.com.cn" in cookie_input:
+            host = "icloud.com.cn"
         acc_id = self._generate_id()
 
         account: Dict[str, Any] = {
@@ -221,11 +241,9 @@ class AccountManager:
         if apple_id and ("@icloud.com" in apple_id or "@me.com" in apple_id or "@mac.com" in apple_id):
             return apple_id
 
-        if apple_id and "@" in apple_id:
-            local = apple_id.split("@")[0]
-            return f"{local}@icloud.com"
-
-        return primary or apple_id
+        # 第三方 Apple ID 的前缀不一定等于真实 iCloud Mail 地址。
+        # IMAP 登录邮箱由用户在设置 App Password 时明确填写。
+        return ""
 
     def validate_account(self, acc_id: str) -> Dict:
         from icloud_hme import ICloudHME
@@ -342,12 +360,11 @@ class AccountManager:
         if not force and cached and age < 300:
             return cached[-limit:]
 
+        mail = self.get_mail_client(acc_id)
         try:
-            mail = self.get_mail_client(acc_id)
-            new_msgs = mail.check_inbox(limit=50, days=days)
+            new_msgs = mail.check_inbox(limit=limit, days=days)
+        finally:
             mail.disconnect()
-        except Exception:
-            new_msgs = []
 
         if new_msgs:
             self._cache.set_inbox(acc_id, new_msgs)
@@ -363,12 +380,11 @@ class AccountManager:
         if not force and cached and age < 300:
             return cached[-limit:]
 
+        mail = self.get_mail_client(acc_id)
         try:
-            mail = self.get_mail_client(acc_id)
-            new_msgs = mail.find_by_recipient(alias_email, limit=20, days=days)
+            new_msgs = mail.find_by_recipient(alias_email, limit=limit, days=days)
+        finally:
             mail.disconnect()
-        except Exception:
-            new_msgs = []
 
         if new_msgs:
             self._cache.set_alias_mail(acc_id, alias_email, new_msgs)
@@ -432,6 +448,14 @@ class AccountManager:
             return {"ok": False, "error": str(e)[:200]}
 
     def create_aliases_for_account(
+        self, acc_id: str, count: int = 1, label: str = ""
+    ) -> List[Dict]:
+        with self._lock:
+            create_lock = self._create_locks.setdefault(acc_id, threading.Lock())
+        with create_lock:
+            return self._create_aliases_for_account_unlocked(acc_id, count, label)
+
+    def _create_aliases_for_account_unlocked(
         self, acc_id: str, count: int = 1, label: str = ""
     ) -> List[Dict]:
         from icloud_hme import ICloudHME

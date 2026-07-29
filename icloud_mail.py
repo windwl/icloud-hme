@@ -89,10 +89,23 @@ class ICloudMail:
     def find_by_recipient(self, recipient: str, limit: int = 20, days: int = 30) -> List[Dict]:
         self._ensure_connected()
         try:
-            return self._search_and_fetch(f'TO "{recipient}"', limit, days)
+            messages = self._search_and_fetch(f'TO "{recipient}"', limit, days)
         except Exception:
             all_msgs = self._search_and_fetch(None, limit * 3, days)
-            return [m for m in all_msgs if recipient.lower() in m.get("to", "").lower()][:limit]
+            messages = [
+                m for m in all_msgs
+                if recipient.lower() in m.get("to", "").lower()
+            ][:limit]
+
+        for message in messages:
+            try:
+                full = self._fetch_full_message(str(message["id"]).encode()) or {}
+                preview = str(full.get("body") or "").strip()[:1000]
+                message["preview"] = preview
+                message["body_preview"] = preview
+            except Exception:
+                message.setdefault("preview", "")
+        return messages
 
     def stream_inbox(self, limit: int = 50, days: int = 7):
         self._ensure_connected()
@@ -155,6 +168,7 @@ class ICloudMail:
             "to": self._decode_header(msg.get("To", "")),
             "subject": self._decode_header(msg.get("Subject", "")),
             "date": self._safe_date(msg.get("Date", "")),
+            "preview": "",
             "body_preview": "",
             "size": len(raw),
         }
