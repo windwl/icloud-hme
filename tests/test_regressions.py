@@ -136,6 +136,27 @@ def test_strip_html_with_link():
     print("  PASS test_strip_html_with_link")
 
 
+def test_chrome_cookie_path_scans_profiles():
+    """Chrome 使用 Profile 1 时也能定位 Cookie 数据库"""
+    import tempfile
+    import icloud_hme
+
+    old_local_appdata = os.environ.get("LOCALAPPDATA")
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            cookie = Path(tmp) / "Google" / "Chrome" / "User Data" / "Profile 1" / "Network" / "Cookies"
+            cookie.parent.mkdir(parents=True)
+            cookie.touch()
+            os.environ["LOCALAPPDATA"] = tmp
+            assert Path(icloud_hme._get_chrome_cookie_path()) == cookie
+    finally:
+        if old_local_appdata is None:
+            os.environ.pop("LOCALAPPDATA", None)
+        else:
+            os.environ["LOCALAPPDATA"] = old_local_appdata
+    print("  PASS test_chrome_cookie_path_scans_profiles")
+
+
 def test_icloud_hme_421_message():
     """421 不回显响应中的会话令牌"""
     from icloud_hme import ICloudHME
@@ -373,6 +394,7 @@ if __name__ == "__main__":
         ("mail_cache_basic", test_mail_cache_basic),
         ("strip_html", test_strip_html),
         ("strip_html_with_link", test_strip_html_with_link),
+        ("chrome_cookie_path_scans_profiles", test_chrome_cookie_path_scans_profiles),
         ("icloud_hme_421_message", test_icloud_hme_421_message),
         ("icloud_hme_account_info", test_icloud_hme_account_info),
         ("log_polling_does_not_hold_server_threads", test_log_polling_does_not_hold_server_threads),

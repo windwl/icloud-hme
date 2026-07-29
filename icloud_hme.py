@@ -69,28 +69,31 @@ ICLOUD_COOKIE_DOMAINS = [
 # ============================================================
 
 def _get_chrome_cookie_path() -> Optional[str]:
-    """查找 Chrome Cookie 数据库路径"""
-    local_appdata = os.environ.get("LOCALAPPDATA", "")
+    """查找 Chrome Default/Profile * 中最近更新的 Cookie 数据库。"""
     candidates = []
+    local_appdata = os.environ.get("LOCALAPPDATA", "")
     if local_appdata:
         base = os.path.join(local_appdata, "Google", "Chrome", "User Data")
-        candidates = [
-            os.path.join(base, "Default", "Network", "Cookies"),
-            os.path.join(base, "Default", "Cookies"),
-        ]
-    # macOS
+        if os.path.isdir(base):
+            for entry in os.scandir(base):
+                if entry.is_dir() and (entry.name == "Default" or entry.name.startswith("Profile ")):
+                    candidates.extend([
+                        os.path.join(entry.path, "Network", "Cookies"),
+                        os.path.join(entry.path, "Cookies"),
+                    ])
+
     home = os.path.expanduser("~")
-    candidates.append(
-        os.path.join(home, "Library", "Application Support", "Google", "Chrome", "Default", "Cookies")
-    )
-    # Linux
-    candidates.append(
-        os.path.join(home, ".config", "google-chrome", "Default", "Cookies")
-    )
-    for p in candidates:
-        if os.path.isfile(p):
-            return p
-    return None
+    for base in (
+        os.path.join(home, "Library", "Application Support", "Google", "Chrome"),
+        os.path.join(home, ".config", "google-chrome"),
+    ):
+        if os.path.isdir(base):
+            for entry in os.scandir(base):
+                if entry.is_dir() and (entry.name == "Default" or entry.name.startswith("Profile ")):
+                    candidates.append(os.path.join(entry.path, "Cookies"))
+
+    existing = [path for path in candidates if os.path.isfile(path)]
+    return max(existing, key=os.path.getmtime) if existing else None
 
 
 def _get_chrome_key() -> Optional[bytes]:
