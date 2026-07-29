@@ -342,6 +342,24 @@ def test_alias_deactivate_and_delete():
     print("  PASS test_alias_deactivate_and_delete")
 
 
+def test_scheduler_beijing_window_and_shared_web_core():
+    """调度窗口使用北京时间，Web 复用统一核心"""
+    from datetime import datetime, timezone
+    import inspect
+    import scheduler
+    import web_ui
+
+    utc_2300 = datetime(2026, 1, 1, 23, 0, tzinfo=timezone.utc)
+    utc_1200 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    assert scheduler.beijing_now(utc_2300).hour == 7
+    assert scheduler.is_active_window(utc_2300) is True
+    assert scheduler.beijing_now(utc_1200).hour == 20
+    assert scheduler.is_active_window(utc_1200) is False
+    assert "run_scheduler" in inspect.getsource(web_ui._scheduler_loop)
+    assert web_ui._scheduler_stop_event is not web_ui._shutdown_event
+    print("  PASS test_scheduler_beijing_window_and_shared_web_core")
+
+
 def test_account_update_lock():
     """账号更新可在持久化时重入锁"""
     import tempfile
@@ -380,6 +398,9 @@ def test_log_polling_does_not_hold_server_threads():
     assert "if(Array.isArray(a.accounts))accounts=a.accounts" in web_ui.UI_HTML
     assert ".acc-card .acc-error{" in web_ui.UI_HTML
     assert "stText.substring" not in web_ui.UI_HTML
+    assert "loading-spinner" in web_ui.UI_HTML
+    assert "apiLong" in web_ui.UI_HTML
+    assert "重复启动返回 HTTP 409" in web_ui.UI_HTML
     web_ui._logs.clear()
     print("  PASS test_log_polling_does_not_hold_server_threads")
 
@@ -436,9 +457,18 @@ def test_compat_api_contract():
             return []
 
     original = web_ui._account_mgr
+    original_scheduler_thread = web_ui._scheduler_thread
     web_ui._account_mgr = Manager()
     try:
         client = web_ui.app.test_client()
+        class AliveThread:
+            def is_alive(self): return True
+
+        web_ui._scheduler_thread = AliveThread()
+        duplicate_start = client.post("/api/scheduler/start")
+        assert duplicate_start.status_code == 409
+        assert duplicate_start.get_json()["ok"] is False
+
         accounts = client.get("/api/accounts").get_json()
         assert accounts["success"] is True
         assert accounts["data"][0]["id"] == "acc_1"
@@ -480,6 +510,7 @@ def test_compat_api_contract():
         assert inbox["data"]["messages"][0]["preview"] == "123456"
     finally:
         web_ui._account_mgr = original
+        web_ui._scheduler_thread = original_scheduler_thread
     print("  PASS test_compat_api_contract")
 
 
@@ -494,6 +525,7 @@ if __name__ == "__main__":
         ("derive_icloud_email_third_party", test_derive_icloud_email_third_party),
         ("update_cookies_preserves_account", test_update_cookies_preserves_account),
         ("alias_deactivate_and_delete", test_alias_deactivate_and_delete),
+        ("scheduler_beijing_window_and_shared_web_core", test_scheduler_beijing_window_and_shared_web_core),
         ("account_update_lock", test_account_update_lock),
         ("mail_cache_basic", test_mail_cache_basic),
         ("strip_html", test_strip_html),
