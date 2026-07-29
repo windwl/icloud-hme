@@ -285,6 +285,8 @@ def test_compat_api_contract():
     """主项目需要的 accounts/create/inbox API 契约"""
     import web_ui
 
+    received_cookie_inputs = []
+
     class Manager:
         def list_accounts(self):
             return [{
@@ -293,6 +295,7 @@ def test_compat_api_contract():
             }]
 
         def update_cookies(self, acc_id, cookie_input):
+            received_cookie_inputs.append(cookie_input)
             return {
                 "id": acc_id, "name": "main", "status": "active",
                 "real_email": "owner@example.com", "alias_total": 2,
@@ -313,7 +316,9 @@ def test_compat_api_contract():
             return []
 
     original = web_ui._account_mgr
+    original_extract = web_ui.extract_chrome_cookies
     web_ui._account_mgr = Manager()
+    web_ui.extract_chrome_cookies = lambda: {"TOKEN": "from-chrome"}
     try:
         client = web_ui.app.test_client()
         accounts = client.get("/api/accounts").get_json()
@@ -329,6 +334,14 @@ def test_compat_api_contract():
         assert updated["ok"] is True
         assert updated["id"] == "acc_1"
 
+        chrome_updated = client.post(
+            "/api/accounts/acc_1/cookies",
+            json={"source": "chrome"},
+        ).get_json()
+        assert chrome_updated["ok"] is True
+        assert json.loads(received_cookie_inputs[-1]) == {"TOKEN": "from-chrome"}
+        assert "从 Chrome 自动提取" in web_ui.UI_HTML
+
         created = client.post(
             "/api/create",
             json={"account_id": "acc_1", "label": "OpenAI"},
@@ -342,6 +355,7 @@ def test_compat_api_contract():
         assert inbox["data"]["messages"][0]["preview"] == "123456"
     finally:
         web_ui._account_mgr = original
+        web_ui.extract_chrome_cookies = original_extract
     print("  PASS test_compat_api_contract")
 
 
