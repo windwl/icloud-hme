@@ -230,6 +230,63 @@ class AccountManager:
                 return dict(self.accounts[acc_id])
             return None
 
+    def update_cookies(self, acc_id: str, cookie_input: str) -> Dict:
+        """校验并替换现有账号 Cookie，保留账号配置和历史数据。"""
+        from icloud_hme import ICloudHME
+
+        cookies = self.parse_cookie_input(cookie_input)
+        with self._lock:
+            account = self.accounts.get(acc_id)
+            if not account:
+                raise KeyError(f"账号不存在: {acc_id}")
+            previous_email = str(account.get("real_email", "") or "").strip()
+            existing_icloud_email = str(account.get("icloud_email", "") or "").strip()
+            host = account.get("host", "icloud.com")
+
+        raw_lower = cookie_input.lower()
+        if ".icloud.com.cn" in raw_lower:
+            host = "icloud.com.cn"
+        elif ".icloud.com" in raw_lower:
+            host = "icloud.com"
+
+        client = ICloudHME(cookies, host=host, verbose=False)
+        client.validate_session()
+        info = client.get_account_info() or {}
+        real_email = str(
+            info.get("appleId", "") or info.get("primaryEmail", "")
+        ).strip()
+        if previous_email and real_email and previous_email.lower() != real_email.lower():
+            raise ValueError(
+                f"新 Cookie 属于 {real_email}，与当前账号 {previous_email} 不一致"
+            )
+
+        updates: Dict[str, Any] = {
+            "cookies": client.session.cookies.get_dict() or cookies,
+            "host": host,
+            "status": "active",
+            "last_validated": datetime.now().isoformat(),
+            "last_error": None,
+        }
+        if real_email:
+            updates["real_email"] = real_email
+        if not existing_icloud_email:
+            derived = self._derive_icloud_email(info)
+            if derived:
+                updates["icloud_email"] = derived
+        try:
+            aliases = client.list_aliases()
+            updates["alias_total"] = len(aliases)
+            updates["alias_active"] = sum(1 for alias in aliases if alias.get("active"))
+        except Exception:
+            pass
+
+        with self._lock:
+            if acc_id not in self.accounts:
+                raise KeyError(f"账号不存在: {acc_id}")
+            self.accounts[acc_id].update(updates)
+            self._save()
+            return dict(self.accounts[acc_id])
+
     @staticmethod
     def _derive_icloud_email(info: Dict) -> str:
         primary = str(info.get("primaryEmail", "") or "").strip()

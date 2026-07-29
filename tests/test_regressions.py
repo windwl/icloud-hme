@@ -170,6 +170,77 @@ def test_icloud_hme_account_info():
     print("  PASS test_icloud_hme_account_info")
 
 
+def test_update_cookies_preserves_account():
+    """新 Cookie 校验成功后覆盖旧值并保留账号配置"""
+    import tempfile
+    import account_manager as module
+    import icloud_hme
+
+    original_path = module.ACCOUNTS_FILE
+    original_client = icloud_hme.ICloudHME
+
+    class Cookies:
+        def __init__(self, values):
+            self.values = values
+
+        def get_dict(self):
+            return dict(self.values)
+
+    class Client:
+        def __init__(self, cookies, host="icloud.com", verbose=False):
+            self.input_cookies = cookies
+            self.host = host
+            self.session = type("Session", (), {
+                "cookies": Cookies({**cookies, "REFRESHED": "yes"})
+            })()
+
+        def validate_session(self):
+            if self.input_cookies.get("TOKEN") == "bad":
+                raise RuntimeError("HTTP 421")
+            return {}
+
+        def get_account_info(self):
+            return {"appleId": "owner@example.com", "primaryEmail": ""}
+
+        def list_aliases(self):
+            return [{"active": True}, {"active": False}]
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            module.ACCOUNTS_FILE = Path(tmp) / "accounts.json"
+            icloud_hme.ICloudHME = Client
+            manager = module.AccountManager()
+            manager.accounts = {"acc_1": {
+                "id": "acc_1",
+                "name": "main",
+                "real_email": "owner@example.com",
+                "icloud_email": "mailbox@icloud.com",
+                "app_password": "keep-me",
+                "cookies": {"TOKEN": "old"},
+                "host": "icloud.com",
+                "status": "error",
+            }}
+
+            try:
+                manager.update_cookies("acc_1", "TOKEN=bad")
+                assert False, "过期 Cookie 应校验失败"
+            except RuntimeError:
+                pass
+            assert manager.accounts["acc_1"]["cookies"] == {"TOKEN": "old"}
+
+            updated = manager.update_cookies("acc_1", "TOKEN=new")
+            assert updated["id"] == "acc_1"
+            assert updated["cookies"] == {"TOKEN": "new", "REFRESHED": "yes"}
+            assert updated["app_password"] == "keep-me"
+            assert updated["icloud_email"] == "mailbox@icloud.com"
+            assert updated["alias_total"] == 2
+            assert updated["status"] == "active"
+    finally:
+        module.ACCOUNTS_FILE = original_path
+        icloud_hme.ICloudHME = original_client
+    print("  PASS test_update_cookies_preserves_account")
+
+
 def test_account_update_lock():
     """账号更新可在持久化时重入锁"""
     import tempfile
@@ -221,6 +292,13 @@ def test_compat_api_contract():
                 "cookies": {"TOKEN": "secret"}, "app_password": "secret-password",
             }]
 
+        def update_cookies(self, acc_id, cookie_input):
+            return {
+                "id": acc_id, "name": "main", "status": "active",
+                "real_email": "owner@example.com", "alias_total": 2,
+                "alias_active": 1,
+            }
+
         def create_aliases_for_account(self, acc_id, count=1, label=""):
             return [{"ok": True, "email": "alias@icloud.com", "account_id": acc_id}]
 
@@ -243,6 +321,13 @@ def test_compat_api_contract():
         assert accounts["data"][0]["id"] == "acc_1"
         assert "cookies" not in accounts["data"][0]
         assert "app_password" not in accounts["data"][0]
+
+        updated = client.post(
+            "/api/accounts/acc_1/cookies",
+            json={"cookie_input": "TOKEN=new"},
+        ).get_json()
+        assert updated["ok"] is True
+        assert updated["id"] == "acc_1"
 
         created = client.post(
             "/api/create",
@@ -269,6 +354,7 @@ if __name__ == "__main__":
         ("derive_icloud_email_primary", test_derive_icloud_email_primary),
         ("derive_icloud_email_appleid_is_icloud", test_derive_icloud_email_appleid_is_icloud),
         ("derive_icloud_email_third_party", test_derive_icloud_email_third_party),
+        ("update_cookies_preserves_account", test_update_cookies_preserves_account),
         ("account_update_lock", test_account_update_lock),
         ("mail_cache_basic", test_mail_cache_basic),
         ("strip_html", test_strip_html),
