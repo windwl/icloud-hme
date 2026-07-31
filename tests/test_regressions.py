@@ -440,7 +440,9 @@ def test_log_polling_does_not_hold_server_threads():
     assert "loading-spinner" in web_ui.UI_HTML
     assert "apiLong" in web_ui.UI_HTML
     assert "重复启动返回 HTTP 409" in web_ui.UI_HTML
-    assert "/api/code?token=xxxx" in web_ui.UI_HTML
+    assert "/api/code?token=TOKEN" in web_ui.UI_HTML
+    assert "Token 使用流程" in web_ui.UI_HTML
+    assert '"code":"123456","token":"TOKEN"' in web_ui.UI_HTML
     assert "<th>Token</th>" in web_ui.UI_HTML
     assert "复制 Token" in web_ui.UI_HTML
     assert "/api/code?email=alias@icloud.com" in web_ui.UI_HTML
