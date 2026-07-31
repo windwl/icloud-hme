@@ -440,6 +440,7 @@ def test_log_polling_does_not_hold_server_threads():
     assert "loading-spinner" in web_ui.UI_HTML
     assert "apiLong" in web_ui.UI_HTML
     assert "重复启动返回 HTTP 409" in web_ui.UI_HTML
+    assert "/api/code?token=xxxx" in web_ui.UI_HTML
     assert "/api/code?email=alias@icloud.com" in web_ui.UI_HTML
     web_ui._logs.clear()
     print("  PASS test_log_polling_does_not_hold_server_threads")
@@ -467,6 +468,7 @@ def test_compat_api_contract():
         def list_accounts(self):
             return [{
                 "id": "acc_1", "name": "main", "status": "active",
+                "icloud_email": "owner@icloud.com",
                 "cookies": {"TOKEN": "secret"}, "app_password": "secret-password",
             }]
 
@@ -486,6 +488,13 @@ def test_compat_api_contract():
         def create_aliases_for_account(self, acc_id, count=1, label=""):
             return [{"ok": True, "email": "alias@icloud.com", "account_id": acc_id}]
 
+        def get_all_aliases(self):
+            return [{
+                "account_id": "acc_1",
+                "email": "alias@icloud.com",
+                "active": True,
+            }]
+
         def check_alias_mail(self, acc_id, alias, limit=20, days=7, force=False):
             return [{
                 "id": "1", "from": "noreply@openai.com", "to": alias,
@@ -498,7 +507,11 @@ def test_compat_api_contract():
 
     original = web_ui._account_mgr
     original_scheduler_thread = web_ui._scheduler_thread
+    original_mail_tokens = web_ui._mail_tokens
+    original_save_mail_tokens = web_ui._save_mail_tokens
     web_ui._account_mgr = Manager()
+    web_ui._mail_tokens = {}
+    web_ui._save_mail_tokens = lambda: None
     try:
         client = web_ui.app.test_client()
         class AliveThread:
@@ -514,6 +527,7 @@ def test_compat_api_contract():
         assert accounts["data"][0]["id"] == "acc_1"
         assert "cookies" not in accounts["data"][0]
         assert "app_password" not in accounts["data"][0]
+        assert accounts["data"][0]["mail_token"]
 
         updated = client.post(
             "/api/accounts/acc_1/cookies",
@@ -542,6 +556,11 @@ def test_compat_api_contract():
             json={"account_id": "acc_1", "label": "OpenAI"},
         ).get_json()
         assert created["data"]["email"] == "alias@icloud.com"
+        alias_token = created["data"]["token"]
+        assert alias_token
+
+        aliases = client.get("/api/aliases").get_json()
+        assert aliases["aliases"][0]["token"] == alias_token
 
         inbox = client.get(
             "/api/inbox",
@@ -559,11 +578,29 @@ def test_compat_api_contract():
         assert code_data["data"]["code"] == "123456"
         assert code_data["data"]["email"] == "alias@icloud.com"
 
+        token_code = client.get(
+            "/api/code",
+            query_string={"token": alias_token},
+        )
+        assert token_code.status_code == 200
+        token_data = token_code.get_json()["data"]
+        assert token_data["code"] == "123456"
+        assert token_data["token"] == alias_token
+        assert "email" not in token_data
+
+        invalid_token = client.get(
+            "/api/code",
+            query_string={"token": "missing"},
+        )
+        assert invalid_token.status_code == 404
+
         invalid_code = client.get("/api/code")
         assert invalid_code.status_code == 400
     finally:
         web_ui._account_mgr = original
         web_ui._scheduler_thread = original_scheduler_thread
+        web_ui._mail_tokens = original_mail_tokens
+        web_ui._save_mail_tokens = original_save_mail_tokens
     print("  PASS test_compat_api_contract")
 
 
