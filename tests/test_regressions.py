@@ -444,6 +444,8 @@ def test_log_polling_does_not_hold_server_threads():
     assert "Token 使用流程" in web_ui.UI_HTML
     assert '"code":"123456","token":"TOKEN"' in web_ui.UI_HTML
     assert "<th>Token</th>" in web_ui.UI_HTML
+    assert ".email-table th{text-align:center;" in web_ui.UI_HTML
+    assert '<th style="text-align:right">操作</th>' not in web_ui.UI_HTML
     assert "复制 Token" in web_ui.UI_HTML
     assert "/api/code?email=alias@icloud.com" in web_ui.UI_HTML
     web_ui._logs.clear()
