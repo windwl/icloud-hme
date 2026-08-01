@@ -448,6 +448,9 @@ def test_log_polling_does_not_hold_server_threads():
     assert '<th style="text-align:right">操作</th>' not in web_ui.UI_HTML
     assert "复制 Token" in web_ui.UI_HTML
     assert "/api/code?email=alias@icloud.com" in web_ui.UI_HTML
+    assert "autoRefreshExpiredCookies();" in web_ui.UI_HTML
+    assert "Date.now()-(_autoCookieAttempts[a.id]||0)>=600000" in web_ui.UI_HTML
+    assert "页面打开时检测到 HTTP 421" in web_ui.UI_HTML
     web_ui._logs.clear()
     print("  PASS test_log_polling_does_not_hold_server_threads")
 
