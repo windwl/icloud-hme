@@ -250,6 +250,43 @@ def test_icloud_hme_account_info():
     print("  PASS test_icloud_hme_account_info")
 
 
+def test_current_hme_request_protocol():
+    """使用当前 Web 版本、账号分区节点和区域语言创建候选地址。"""
+    from urllib.parse import parse_qs, urlparse
+    from icloud_hme import CLIENT_BUILD_NUMBER, ICloudHME
+
+    assert CLIENT_BUILD_NUMBER == "2626Build17"
+    client = ICloudHME({}, host="icloud.com.cn", verbose=False)
+    calls = []
+
+    def request(method, url, json_data=None, **kwargs):
+        calls.append((method, url, json_data))
+        if url.endswith("/validate"):
+            return {
+                "webservices": {
+                    "maildomainws": {"url": "https://p217-maildomainws.icloud.com.cn"},
+                    "premiummailsettings": {"url": "https://wrong.example"},
+                },
+                "userPartition": 999,
+                "dsInfo": {},
+            }
+        return {"success": True, "result": {"hme": "alias@icloud.com"}}
+
+    client._request = request
+    assert client.generate() == "alias@icloud.com"
+    assert client._service_url == "https://p217-maildomainws.icloud.com.cn"
+    assert calls[-1][2] == {"langCode": "zh-cn"}
+    params = parse_qs(urlparse(client._build_url("https://example.test/v1/hme/generate")).query)
+    assert params["clientBuildNumber"] == ["2626Build17"]
+    assert params["clientMasteringNumber"] == ["2626Build17"]
+
+    fallback = ICloudHME({}, verbose=False)
+    fallback._request = lambda *args, **kwargs: {"userPartition": 68, "dsInfo": {}}
+    fallback.validate_session()
+    assert fallback._service_url == "https://p68-maildomainws.icloud.com"
+    print("  PASS test_current_hme_request_protocol")
+
+
 def test_update_cookies_preserves_account():
     """新 Cookie 校验成功后覆盖旧值并保留账号配置"""
     import tempfile
@@ -633,6 +670,7 @@ if __name__ == "__main__":
         ("chrome_cookie_path_scans_profiles", test_chrome_cookie_path_scans_profiles),
         ("icloud_hme_421_message", test_icloud_hme_421_message),
         ("icloud_hme_account_info", test_icloud_hme_account_info),
+        ("current_hme_request_protocol", test_current_hme_request_protocol),
         ("log_polling_does_not_hold_server_threads", test_log_polling_does_not_hold_server_threads),
         ("chrome_extension_manifest", test_chrome_extension_manifest),
         ("compat_api_contract", test_compat_api_contract),

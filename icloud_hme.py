@@ -54,7 +54,7 @@ import requests
 # 常量
 # ============================================================
 
-CLIENT_BUILD_NUMBER = "2206Hotfix11"
+CLIENT_BUILD_NUMBER = "2626Build17"
 REQUEST_TIMEOUT = 15
 MAX_RETRIES = 3
 RETRY_DELAYS = [1, 2.5, 5]
@@ -336,15 +336,22 @@ class ICloudHME:
         """校验 iCloud 会话，获取 Hide My Email 服务端点及账号身份"""
         self._log("校验 iCloud 会话...")
         data = self._request("POST", f"{self.setup_url}/validate", timeout=20)
-        premium = data.get("webservices", {}).get("premiummailsettings", {})
-        if not premium.get("url"):
+        webservices = data.get("webservices", {})
+        partition = str(data.get("userPartition") or "").strip()
+        suffix = "com.cn" if self.host == "icloud.com.cn" else "com"
+        service_url = (
+            webservices.get("maildomainws", {}).get("url")
+            or (f"https://p{partition}-maildomainws.icloud.{suffix}" if partition else "")
+            or webservices.get("premiummailsettings", {}).get("url")
+        )
+        if not service_url:
             raise RuntimeError(
                 "iCloud 会话校验失败 — 可能原因:\n"
                 "  1. 未开通 iCloud+ 订阅 (Hide My Email 需要 iCloud+)\n"
                 "  2. Cookie 已过期，请在 Chrome 重新登录 icloud.com\n"
                 "  3. 网络问题"
             )
-        self._service_url = premium["url"].rstrip("/")
+        self._service_url = service_url.rstrip("/")
 
         # 提取账号身份信息
         ds_info = data.get("dsInfo", {})
@@ -389,7 +396,13 @@ class ICloudHME:
         """生成候选别名 (未保留)"""
         self._resolve_service()
         self._log("生成候选别名...")
-        response = self._request("POST", f"{self._service_url}/v1/hme/generate", max_attempts=2)
+        lang_code = "zh-cn" if self.host == "icloud.com.cn" else "en-us"
+        response = self._request(
+            "POST",
+            f"{self._service_url}/v1/hme/generate",
+            json_data={"langCode": lang_code},
+            max_attempts=2,
+        )
         if not response.get("success"):
             err = response.get("error", {})
             raise RuntimeError(f"生成失败: {err.get('errorMessage', 'unknown')}")
